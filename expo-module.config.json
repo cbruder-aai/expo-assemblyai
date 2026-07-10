@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["ExpoAssemblyAIModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.assemblyai.ExpoAssemblyAIModule"]
+  }
+}

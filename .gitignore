@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+build/
+dist/
+lib/
+*.tsbuildinfo
+
+# Expo
+.expo/
+**/.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+ios/Pods/
+ios/build/
+android/.gradle/
+android/build/
+android/.cxx/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+DerivedData/
+
+# Env / secrets — never commit an AssemblyAI API key
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+*.log
+npm-debug.*
+yarn-error.*
+.idea/
+.vscode/*
+!.vscode/extensions.json

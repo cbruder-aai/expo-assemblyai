@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "AssemblyAI Voice",
+    "slug": "voice-agent-demo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b0b12",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.assemblyai.voiceagentdemo"
+    },
+    "android": {
+      "package": "com.assemblyai.voiceagentdemo",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0b12",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-assemblyai",
+        {
+          "microphonePermission": "AssemblyAI Voice uses the microphone to stream your speech for live transcription and voice conversations.",
+          "enableBackgroundAudio": true
+        }
+      ]
+    ]
+  }
+}
