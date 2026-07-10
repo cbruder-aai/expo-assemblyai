@@ -51,6 +51,14 @@ final class TwoWayAudioEngine {
   /// Format the player node runs at (engine main-mixer format); playback buffers
   /// are converted into this before scheduling.
   private var playbackFormat: AVAudioFormat?
+  /// Source geometry of incoming agent audio: mono PCM16 at `outputSampleRate`.
+  private var playbackSourceFormat: AVAudioFormat?
+  /// Reused resampler for agent audio. Built once (like `captureConverter`) rather
+  /// than per chunk: a fresh converter per chunk both congests the serial audio
+  /// queue and restarts the resampler filter at every chunk boundary, which is
+  /// audible as choppy playback. Reusing it also carries filter state across
+  /// boundaries for gapless resampling.
+  private var playbackConverter: AVAudioConverter?
   /// Target capture format handed up to JS: mono, PCM16, `inputSampleRate`.
   private var captureFormat: AVAudioFormat?
   private var captureConverter: AVAudioConverter?
@@ -84,6 +92,8 @@ final class TwoWayAudioEngine {
       engine.stop()
       pendingCapture.removeAll(keepingCapacity: true)
       scheduledPlaybackBuffers = 0
+      playbackConverter = nil
+      playbackSourceFormat = nil
       isRunning = false
       try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -120,6 +130,8 @@ final class TwoWayAudioEngine {
       guard let self else { return }
       self.player.stop()
       self.scheduledPlaybackBuffers = 0
+      // Drop the resampler's filter tail so the next reply starts clean.
+      self.playbackConverter?.reset()
       if self.isRunning { self.player.play() }
     }
   }
@@ -150,6 +162,18 @@ final class TwoWayAudioEngine {
 
     engine.attach(player)
     engine.connect(player, to: engine.mainMixerNode, format: hardwareFormat)
+
+    // Build the agent-audio resampler once. Source is mono PCM16 at the
+    // configured output rate; target is the player/mixer (hardware) format.
+    if let source = AVAudioFormat(
+      commonFormat: .pcmFormatInt16,
+      sampleRate: config.outputSampleRate,
+      channels: 1,
+      interleaved: true)
+    {
+      playbackSourceFormat = source
+      playbackConverter = AVAudioConverter(from: source, to: hardwareFormat)
+    }
 
     guard
       let capture = AVAudioFormat(
@@ -217,16 +241,14 @@ final class TwoWayAudioEngine {
   private func decodePlaybackBuffer(_ base64: String) -> AVAudioPCMBuffer? {
     guard
       let data = Data(base64Encoded: base64), !data.isEmpty,
-      let sourceFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16, sampleRate: config.outputSampleRate, channels: 1,
-        interleaved: true),
+      let sourceFormat = playbackSourceFormat,
+      let converter = playbackConverter,
       let playbackFormat
     else { return nil }
 
     let sourceFrames = AVAudioFrameCount(data.count / 2)
     guard
-      let source = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: sourceFrames),
-      let converter = AVAudioConverter(from: sourceFormat, to: playbackFormat)
+      let source = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: sourceFrames)
     else { return nil }
     source.frameLength = sourceFrames
     if let channel = source.int16ChannelData {

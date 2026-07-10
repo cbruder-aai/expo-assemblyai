@@ -65,12 +65,29 @@ export async function createStreamingToken(
   return body.token;
 }
 
+export type VoiceAgentTokenOptions = {
+  /** Redemption window in seconds (1–600). The token must open a socket within this. Default 60. */
+  expiresInSeconds?: number;
+  /** Max voice-agent session length in seconds (60–10800). Default 10800 (3h). */
+  maxSessionDurationSeconds?: number;
+};
+
 /**
  * Mint a Voice Agent token. ⚠️ Server-side only — same warning as above.
  * Endpoint: `GET https://agents.assemblyai.com/v1/token`. Each token is one-time use.
+ *
+ * `expires_in_seconds` is **required** by the API (the token-redemption window,
+ * not the session length); omitting it returns a 422.
  */
-export async function createVoiceAgentToken(apiKey: string): Promise<string> {
-  const res = await fetch('https://agents.assemblyai.com/v1/token', {
+export async function createVoiceAgentToken(
+  apiKey: string,
+  options: VoiceAgentTokenOptions = {}
+): Promise<string> {
+  const params = new URLSearchParams({
+    expires_in_seconds: String(options.expiresInSeconds ?? 60),
+    max_session_duration_seconds: String(options.maxSessionDurationSeconds ?? 10_800),
+  });
+  const res = await fetch(`https://agents.assemblyai.com/v1/token?${params}`, {
     headers: { Authorization: apiKey },
   });
   if (!res.ok) {

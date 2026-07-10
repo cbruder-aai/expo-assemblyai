@@ -1,14 +1,28 @@
 import { useState } from 'react';
 import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 
-import { LiveTranscriptionScreen } from './src/screens/LiveTranscriptionScreen';
-import { VoiceAgentScreen } from './src/screens/VoiceAgentScreen';
+import { DreamsProvider } from './src/context/DreamsContext';
+import { DreamEditorModal } from './src/components/DreamEditorModal';
+import { VoiceAgentModal } from './src/components/VoiceAgentModal';
+import { VoiceFab } from './src/components/VoiceFab';
+import { CalendarScreen } from './src/screens/CalendarScreen';
+import { JournalListScreen } from './src/screens/JournalListScreen';
 import { theme } from './src/theme';
 
-type Tab = 'agent' | 'transcribe';
+type Tab = 'list' | 'calendar';
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('agent');
+  return (
+    <DreamsProvider>
+      <Root />
+    </DreamsProvider>
+  );
+}
+
+function Root() {
+  const [tab, setTab] = useState<Tab>('list');
+  const [editorDate, setEditorDate] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -18,26 +32,39 @@ export default function App() {
         <Text style={styles.brand}>
           Assembly<Text style={{ color: theme.colors.pink }}>AI</Text>
         </Text>
-        <Text style={styles.tagline}>expo-assemblyai · two-way voice</Text>
+        <Text style={styles.tagline}>Dream Journal</Text>
       </View>
 
       <View style={styles.tabs}>
-        <TabButton label="Voice Agent" active={tab === 'agent'} onPress={() => setTab('agent')} />
-        <TabButton
-          label="Live Transcription"
-          active={tab === 'transcribe'}
-          onPress={() => setTab('transcribe')}
-        />
+        <TabButton label="List" active={tab === 'list'} onPress={() => setTab('list')} />
+        <TabButton label="Calendar" active={tab === 'calendar'} onPress={() => setTab('calendar')} />
       </View>
 
       <View style={styles.body}>
-        {tab === 'agent' ? <VoiceAgentScreen /> : <LiveTranscriptionScreen />}
+        {tab === 'list' ? (
+          <JournalListScreen onOpenDay={setEditorDate} />
+        ) : (
+          <CalendarScreen onOpenDay={setEditorDate} />
+        )}
       </View>
+
+      <VoiceFab onPress={() => setVoiceOpen(true)} />
+
+      <DreamEditorModal date={editorDate} onClose={() => setEditorDate(null)} />
+      <VoiceAgentModal visible={voiceOpen} onClose={() => setVoiceOpen(false)} />
     </SafeAreaView>
   );
 }
 
-function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function TabButton({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
   return (
     <Pressable onPress={onPress} style={[styles.tab, active && styles.tabActive]}>
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
@@ -55,6 +82,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginHorizontal: 20,
     marginTop: 12,
+    marginBottom: 8,
     padding: 4,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.pill,

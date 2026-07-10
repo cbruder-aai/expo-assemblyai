@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "AssemblyAI Voice",
+    "name": "AssemblyAI - Dream Journal",
     "slug": "voice-agent-demo",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -29,7 +29,7 @@
       [
         "expo-assemblyai",
         {
-          "microphonePermission": "AssemblyAI Voice uses the microphone to stream your speech for live transcription and voice conversations.",
+          "microphonePermission": "Dream Journal uses the microphone to dictate your dreams and to talk with your voice companion.",
           "enableBackgroundAudio": true
         }
       ]

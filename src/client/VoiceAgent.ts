@@ -1,4 +1,4 @@
-import { TypedEmitter } from './emitter';
+import { TypedEmitter, closeSocket } from './emitter';
 import type { TokenProvider } from './tokens';
 
 /** A function tool the agent can call. `parameters` is JSON Schema, passed to the LLM verbatim. */
@@ -196,10 +196,16 @@ export class VoiceAgent extends TypedEmitter<VoiceAgentEvents> {
     this.send({ type: 'session.update', session: this.buildSession(session) });
   }
 
-  /** Cleanly end the session (non-resumable); server replies `session.ended` then closes. */
+  /**
+   * Cleanly end the session (non-resumable); server replies `session.ended` then closes.
+   *
+   * Resolves once the socket has actually closed, so `ended`/`close` listeners
+   * still fire before teardown. Listeners are removed only after that, not
+   * synchronously (otherwise a caller-initiated `end()` would swallow both events).
+   */
   async end(): Promise<void> {
     this.send({ type: 'session.end' });
-    this.ws?.close();
+    await closeSocket(this.ws);
     this.removeAllListeners();
   }
 

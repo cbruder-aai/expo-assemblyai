@@ -13,10 +13,14 @@ import android.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -60,8 +64,17 @@ class TwoWayAudioEngine(private val listener: Listener) {
   private var captureJob: Job? = null
   private val scope = CoroutineScope(Dispatchers.Default)
 
-  private val playbackEmpty = Object()
-  @Volatile private var queuedFrames = 0
+  // Playback writes run on ONE dedicated thread so agent-audio chunks are written
+  // to the AudioTrack strictly in arrival order, back-to-back. Fanning them across
+  // Dispatchers.Default let multiple blocking writes race on the same track and
+  // interleave PCM frames, which is audible as choppy/garbled playback.
+  private val playbackDispatcher =
+    Executors.newSingleThreadExecutor { r -> Thread(r, "aai-audio-playback") }.asCoroutineDispatcher()
+  private val playbackScope = CoroutineScope(playbackDispatcher + SupervisorJob())
+  // Bumped on barge-in so chunks queued for an interrupted reply are dropped
+  // instead of being written after the flush.
+  @Volatile private var playbackGeneration = 0
+  private val queuedFrames = AtomicInteger(0)
 
   fun configure(config: Config) {
     this.config = config
@@ -134,13 +147,16 @@ class TwoWayAudioEngine(private val listener: Listener) {
   fun stop() {
     if (!running) return
     running = false
+    // Drop any queued playback and unblock an in-flight write before releasing
+    // the track, so a pending write can't touch a released AudioTrack.
+    playbackGeneration++
     runBlocking { captureJob?.cancelAndJoin() }
     captureJob = null
     aec?.release(); aec = null
     ns?.release(); ns = null
     record?.apply { stop(); release() }; record = null
-    track?.apply { stop(); flush(); release() }; track = null
-    queuedFrames = 0
+    track?.apply { pause(); flush(); stop(); release() }; track = null
+    queuedFrames.set(0)
   }
 
   private suspend fun captureLoop(cfg: Config) {
@@ -171,24 +187,28 @@ class TwoWayAudioEngine(private val listener: Listener) {
     } catch (e: IllegalArgumentException) {
       return
     }
-    scope.launch {
-      val player = track ?: return@launch
-      queuedFrames++
-      listener.onOutputLevel(rms(pcm, pcm.size))
-      player.write(pcm, 0, pcm.size, AudioTrack.WRITE_BLOCKING)
-      queuedFrames--
-      if (queuedFrames == 0) listener.onPlaybackFinished()
+    val generation = playbackGeneration
+    queuedFrames.incrementAndGet()
+    playbackScope.launch {
+      val player = track
+      // Skip chunks left over from a reply that was interrupted (barge-in), but
+      // still drain the counter so onPlaybackFinished fires exactly once.
+      if (player != null && generation == playbackGeneration) {
+        listener.onOutputLevel(rms(pcm, pcm.size))
+        player.write(pcm, 0, pcm.size, AudioTrack.WRITE_BLOCKING)
+      }
+      if (queuedFrames.decrementAndGet() == 0) listener.onPlaybackFinished()
     }
   }
 
   /** Barge-in: flush queued agent audio so it stops mid-sentence on interruption. */
   fun clearPlayback() {
+    playbackGeneration++
     track?.apply {
       pause()
       flush()
       play()
     }
-    queuedFrames = 0
   }
 
   private fun rms(bytes: ByteArray, length: Int): Float {

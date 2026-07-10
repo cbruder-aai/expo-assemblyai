@@ -28,18 +28,36 @@ public class ExpoAssemblyAIModule: Module, TwoWayAudioEngineDelegate {
     // MARK: Permissions
 
     AsyncFunction("requestRecordingPermissionsAsync") { (promise: Promise) in
-      AVAudioApplication.requestRecordPermission { granted in
+      let resolve: (Bool) -> Void = { granted in
         promise.resolve(["granted": granted, "canAskAgain": true, "status": granted ? "granted" : "denied"])
+      }
+      // `AVAudioApplication` is iOS 17+; fall back to the deprecated
+      // `AVAudioSession` permission API on older systems.
+      if #available(iOS 17.0, *) {
+        AVAudioApplication.requestRecordPermission(completionHandler: resolve)
+      } else {
+        AVAudioSession.sharedInstance().requestRecordPermission(resolve)
       }
     }
 
     Function("getRecordingPermissionsAsync") { () -> [String: Any] in
-      let status = AVAudioApplication.shared.recordPermission
-      let granted = status == .granted
+      // Normalize both the iOS 17+ (`AVAudioApplication`) and legacy
+      // (`AVAudioSession`) record-permission enums to undetermined/granted/denied.
+      let isGranted: Bool
+      let isUndetermined: Bool
+      if #available(iOS 17.0, *) {
+        let status = AVAudioApplication.shared.recordPermission
+        isGranted = status == .granted
+        isUndetermined = status == .undetermined
+      } else {
+        let status = AVAudioSession.sharedInstance().recordPermission
+        isGranted = status == .granted
+        isUndetermined = status == .undetermined
+      }
       return [
-        "granted": granted,
-        "canAskAgain": status == .undetermined,
-        "status": granted ? "granted" : (status == .undetermined ? "undetermined" : "denied"),
+        "granted": isGranted,
+        "canAskAgain": isUndetermined,
+        "status": isGranted ? "granted" : (isUndetermined ? "undetermined" : "denied"),
       ]
     }
 
@@ -48,8 +66,11 @@ public class ExpoAssemblyAIModule: Module, TwoWayAudioEngineDelegate {
     AsyncFunction("initialize") { (options: AudioConfig) in
       audio.configure(
         .init(
-          inputSampleRate: options.inputSampleRate,
-          outputSampleRate: options.outputSampleRate,
+          // Sample rates cross the JS bridge as integer Hz (matching the Android
+          // module and the TS `AudioSessionConfig`); the engine wants Double for
+          // AVAudioFormat, so widen here at the boundary.
+          inputSampleRate: Double(options.inputSampleRate),
+          outputSampleRate: Double(options.outputSampleRate),
           enableEchoCancellation: options.enableEchoCancellation,
           chunkDurationMs: options.chunkDurationMs))
     }
@@ -86,8 +107,8 @@ public class ExpoAssemblyAIModule: Module, TwoWayAudioEngineDelegate {
 /// Mirrors the JS `AudioSessionConfig`. Field names/defaults must stay in sync
 /// with `src/ExpoAssemblyAIModule.types.ts`.
 struct AudioConfig: Record {
-  @Field var inputSampleRate: Double = 16_000
-  @Field var outputSampleRate: Double = 24_000
+  @Field var inputSampleRate: Int = 16_000
+  @Field var outputSampleRate: Int = 24_000
   @Field var enableEchoCancellation: Bool = true
   @Field var chunkDurationMs: Int = 100
 }

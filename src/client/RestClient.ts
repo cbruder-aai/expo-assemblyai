@@ -87,10 +87,24 @@ export class RestClient {
     return (await res.json()) as Transcript;
   }
 
-  /** Submit and poll until the transcript is `completed` or `error`. */
-  async transcribe(params: TranscribeParams, pollIntervalMs = 3_000): Promise<Transcript> {
+  /**
+   * Submit and poll until the transcript is `completed` or `error`.
+   *
+   * Polling is bounded by `timeoutMs` (default 10 minutes) so a job that never
+   * finishes rejects instead of looping forever. Raise it for long files.
+   */
+  async transcribe(
+    params: TranscribeParams,
+    options: { pollIntervalMs?: number; timeoutMs?: number } = {}
+  ): Promise<Transcript> {
+    const pollIntervalMs = options.pollIntervalMs ?? 3_000;
+    const timeoutMs = options.timeoutMs ?? 600_000;
+    const deadline = Date.now() + timeoutMs;
     let t = await this.submit(params);
     while (t.status !== 'completed' && t.status !== 'error') {
+      if (Date.now() >= deadline) {
+        throw new Error(`transcription timed out after ${timeoutMs}ms (id ${t.id}, status ${t.status})`);
+      }
       await delay(pollIntervalMs);
       t = await this.get(t.id);
     }

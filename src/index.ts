@@ -29,6 +29,7 @@ export {
   createVoiceAgentToken,
   type TokenProvider,
   type StreamingTokenOptions,
+  type VoiceAgentTokenOptions,
 } from './client/tokens';
 
 // Streaming STT

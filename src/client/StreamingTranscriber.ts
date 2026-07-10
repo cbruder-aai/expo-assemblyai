@@ -1,4 +1,4 @@
-import { TypedEmitter, base64ToBytes } from './emitter';
+import { TypedEmitter, base64ToBytes, closeSocket } from './emitter';
 import type { TokenProvider } from './tokens';
 
 /** A single word inside a {@link StreamingTurn}. */
@@ -69,8 +69,10 @@ export type StreamingTranscriberOptions = {
  * Live speech-to-text over the Universal Streaming WebSocket.
  *
  * Audio goes up as **raw binary frames** (50–1000ms of PCM each). Feed it the
- * base64 chunks from the native mic via {@link sendAudioBase64}; it converts and
- * frames them. The server replies with `Turn` messages surfaced as `turn` events.
+ * base64 chunks from the native mic via {@link sendAudioBase64}; it base64-decodes
+ * each chunk and sends it as one binary frame (the native layer already sizes the
+ * chunks via `chunkDurationMs`, so the client does not re-frame). The server
+ * replies with `Turn` messages surfaced as `turn` events.
  *
  * ```ts
  * const stt = new StreamingTranscriber({ token: getToken });
@@ -175,10 +177,16 @@ export class StreamingTranscriber extends TypedEmitter<StreamingEvents> {
     this.send({ type: 'UpdateConfiguration', ...config });
   }
 
-  /** Gracefully end the session; the server replies with `Termination` then closes. */
+  /**
+   * Gracefully end the session; the server replies with `Termination` then closes.
+   *
+   * Resolves once the socket has actually closed, so any `close` listener (which
+   * carries the `Termination` payload: audio/session duration) still fires before
+   * teardown. Listeners are removed only after that, not synchronously.
+   */
   async close(): Promise<void> {
     this.send({ type: 'Terminate' });
-    this.ws?.close();
+    await closeSocket(this.ws);
     this.removeAllListeners();
   }
 

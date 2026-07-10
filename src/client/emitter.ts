@@ -28,6 +28,36 @@ export class TypedEmitter<Events extends Record<string, (...args: any[]) => void
   }
 }
 
+/**
+ * Close a WebSocket and resolve once it has actually closed (or after a short
+ * grace period if the server never sends a close frame).
+ *
+ * Callers use this before removing their listeners so the socket's `onclose`
+ * handler — which emits the client's `close`/`ended` event with the final
+ * termination payload — still runs while listeners are attached. Wrapping the
+ * existing `onclose` preserves whatever the client registered in `connect()`.
+ */
+export function closeSocket(ws: WebSocket | null, graceMs = 2_000): Promise<void> {
+  // 3 === WebSocket.CLOSED. Nothing to wait for if it's gone or already closed.
+  if (!ws || ws.readyState === 3) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timer = setTimeout(finish, graceMs);
+    const prevOnClose = ws.onclose;
+    ws.onclose = (event) => {
+      clearTimeout(timer);
+      prevOnClose?.call(ws, event);
+      finish();
+    };
+    ws.close();
+  });
+}
+
 /** base64 → Uint8Array, for sending native mic chunks as binary WS frames. */
 export function base64ToBytes(base64: string): Uint8Array {
   const binary = decodeBase64(base64);
