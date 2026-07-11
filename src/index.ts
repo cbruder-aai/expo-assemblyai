@@ -77,6 +77,7 @@ export {
 } from './hooks/useStreamingTranscription';
 export {
   useVoiceAgent,
+  type TranscriptMessage,
   type UseVoiceAgentOptions,
   type UseVoiceAgentResult,
   type VoiceAgentStatus,

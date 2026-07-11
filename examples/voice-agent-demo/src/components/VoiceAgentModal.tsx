@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useVoiceAgent } from 'expo-assemblyai';
 
@@ -56,6 +56,11 @@ function Conversation({ onClose }: { onClose: () => void }) {
   const running = agent.status !== 'idle' && agent.status !== 'ended';
   const orbMode = agent.isAgentSpeaking ? 'speaking' : running ? 'listening' : 'idle';
 
+  // Keep the newest bubble in view as the conversation grows and as the live
+  // transcript of the current turn extends.
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollToEnd = () => scrollRef.current?.scrollToEnd({ animated: true });
+
   async function handleClose() {
     await agent.stop();
     onClose();
@@ -82,18 +87,25 @@ function Conversation({ onClose }: { onClose: () => void }) {
         />
         <Text style={styles.status}>{statusLabel(agent.status, agent.isAgentSpeaking)}</Text>
 
-        <ScrollView style={styles.transcript} contentContainerStyle={styles.transcriptInner}>
-          {agent.userTranscript ? (
-            <Bubble who="You" text={agent.userTranscript} align="right" color={theme.colors.cyan} />
-          ) : null}
-          {agent.agentTranscript ? (
-            <Bubble who="Companion" text={agent.agentTranscript} align="left" color={theme.colors.pink} />
-          ) : null}
-          {!agent.userTranscript && !agent.agentTranscript ? (
+        <ScrollView
+          ref={scrollRef}
+          style={styles.transcript}
+          contentContainerStyle={styles.transcriptInner}
+          onContentSizeChange={scrollToEnd}
+        >
+          {agent.messages.length ? (
+            agent.messages.map((m) =>
+              m.role === 'user' ? (
+                <Bubble key={m.id} who="You" text={m.text} align="right" color={theme.colors.cyan} />
+              ) : (
+                <Bubble key={m.id} who="Companion" text={m.text} align="left" color={theme.colors.pink} />
+              )
+            )
+          ) : (
             <Text style={styles.hint}>
               Try “What did I dream about last night?” or “Compare today’s dream to yesterday’s.”
             </Text>
-          ) : null}
+          )}
         </ScrollView>
 
         {agent.error ? <Text style={styles.error}>⚠️ {agent.error.message}</Text> : null}

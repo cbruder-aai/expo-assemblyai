@@ -16,14 +16,17 @@ export function CalendarScreen({ onOpenDay }: { onOpenDay: (date: string) => voi
 
   const entryDays = useMemo(() => new Set(dreams.map((d) => d.date)), [dreams]);
 
-  // Build the grid: leading blanks for the first-of-month weekday, then the days.
-  const cells = useMemo(() => {
+  // Build the grid: leading blanks for the first-of-month weekday, then the days,
+  // then trailing blanks to fill the last week. Chunked into rows of 7.
+  const weeks = useMemo(() => {
     const firstDay = new Date(view.year, view.month, 1).getDay();
     const daysInMonth = new Date(view.year, view.month + 1, 0).getDate();
     const out: (number | null)[] = Array.from({ length: firstDay }, () => null);
     for (let d = 1; d <= daysInMonth; d++) out.push(d);
     while (out.length % 7 !== 0) out.push(null);
-    return out;
+    const rows: (number | null)[][] = [];
+    for (let i = 0; i < out.length; i += 7) rows.push(out.slice(i, i + 7));
+    return rows;
   }, [view]);
 
   function shift(delta: number) {
@@ -58,32 +61,37 @@ export function CalendarScreen({ onOpenDay }: { onOpenDay: (date: string) => voi
       </View>
 
       <View style={styles.grid}>
-        {cells.map((day, i) => {
-          if (day === null) return <View key={`b${i}`} style={styles.cell} />;
-          const key = keyFor(day);
-          const hasEntry = entryDays.has(key);
-          const isToday = key === todayKey;
-          const isFuture = key > todayKey;
-          return (
-            <Pressable
-              key={key}
-              style={styles.cell}
-              disabled={isFuture}
-              onPress={() => onOpenDay(key)}>
-              <View style={[styles.dayCircle, isToday && styles.today, hasEntry && styles.hasEntry]}>
-                <Text
-                  style={[
-                    styles.dayNum,
-                    isFuture && styles.futureNum,
-                    (isToday || hasEntry) && styles.dayNumStrong,
-                  ]}>
-                  {day}
-                </Text>
-              </View>
-              <View style={[styles.dot, hasEntry ? styles.dotOn : undefined]} />
-            </Pressable>
-          );
-        })}
+        {weeks.map((week, wi) => (
+          <View key={wi} style={styles.week}>
+            {week.map((day, di) => {
+              if (day === null) return <View key={`b${wi}-${di}`} style={styles.cell} />;
+              const key = keyFor(day);
+              const hasEntry = entryDays.has(key);
+              const isToday = key === todayKey;
+              const isFuture = key > todayKey;
+              return (
+                <Pressable
+                  key={key}
+                  style={styles.cell}
+                  disabled={isFuture}
+                  onPress={() => onOpenDay(key)}>
+                  <View
+                    style={[styles.dayCircle, isToday && styles.today, hasEntry && styles.hasEntry]}>
+                    <Text
+                      style={[
+                        styles.dayNum,
+                        isFuture && styles.futureNum,
+                        (isToday || hasEntry) && styles.dayNumStrong,
+                      ]}>
+                      {day}
+                    </Text>
+                  </View>
+                  <View style={[styles.dot, hasEntry ? styles.dotOn : undefined]} />
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
       </View>
 
       <Text style={styles.legend}>Tap a day to add or read that night’s dream.</Text>
@@ -117,8 +125,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  cell: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
+  grid: {},
+  week: { flexDirection: 'row' },
+  cell: { flex: 1, height: 56, alignItems: 'center', justifyContent: 'center' },
   dayCircle: {
     width: 40,
     height: 40,

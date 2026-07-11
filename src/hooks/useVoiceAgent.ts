@@ -5,6 +5,16 @@ import { VoiceAgent, type AgentToolCall, type VoiceAgentOptions } from '../clien
 
 export type VoiceAgentStatus = 'idle' | 'connecting' | 'listening' | 'speaking' | 'error' | 'ended';
 
+/** One line of the conversation, oldest-appended-last. Render these as chat bubbles. */
+export type TranscriptMessage = {
+  /** Stable key: the server `itemId` (user) or `replyId` (agent). */
+  id: string;
+  role: 'user' | 'agent';
+  text: string;
+  /** False while the user's turn is still being transcribed (live deltas). */
+  isFinal: boolean;
+};
+
 export type UseVoiceAgentOptions = VoiceAgentOptions & {
   /**
    * Handle a tool call and return its result. The hook sends the result back to
@@ -17,6 +27,12 @@ export type UseVoiceAgentOptions = VoiceAgentOptions & {
 
 export type UseVoiceAgentResult = {
   status: VoiceAgentStatus;
+  /**
+   * The full conversation so far, in order (oldest first, newest last). Each
+   * turn is its own message; the in-progress user turn updates live as it's
+   * transcribed. Render as a scrollable list of chat bubbles.
+   */
+  messages: TranscriptMessage[];
   /** The user's latest transcribed utterance (updates live). */
   userTranscript: string;
   /** The agent's latest spoken response text. */
@@ -53,6 +69,7 @@ export function useVoiceAgent(
   session: AudioSession = sharedAudioSession
 ): UseVoiceAgentResult {
   const [status, setStatus] = useState<VoiceAgentStatus>('idle');
+  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [userTranscript, setUserTranscript] = useState('');
   const [agentTranscript, setAgentTranscript] = useState('');
   const [isAgentSpeaking, setAgentSpeaking] = useState(false);
@@ -63,10 +80,12 @@ export function useVoiceAgent(
 
   const agentRef = useRef<VoiceAgent | null>(null);
   const subsRef = useRef<{ remove: () => void }[]>([]);
+  const pendingUserId = useRef(0);
 
   const start = useCallback(async () => {
     if (agentRef.current) return;
     setError(null);
+    setMessages([]);
     setStatus('connecting');
     try {
       const permission = session.getPermissions();
@@ -89,9 +108,42 @@ export function useVoiceAgent(
         setAgentSpeaking(false);
         setStatus('listening');
       });
-      agent.on('userTranscriptDelta', setUserTranscript);
-      agent.on('userTranscript', ({ text }) => setUserTranscript(text));
-      agent.on('agentTranscript', ({ text }) => setAgentTranscript(text));
+      agent.on('userTranscriptDelta', (text) => {
+        setUserTranscript(text);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          // Live deltas replace the current, not-yet-final user bubble; a new
+          // turn (last message final or from the agent) starts a fresh one.
+          if (last && last.role === 'user' && !last.isFinal) {
+            return [...prev.slice(0, -1), { ...last, text }];
+          }
+          if (!text) return prev; // don't open an empty bubble on a stray empty delta
+          return [...prev, { id: `pending-${++pendingUserId.current}`, role: 'user', text, isFinal: false }];
+        });
+      });
+      agent.on('userTranscript', ({ text, itemId }) => {
+        setUserTranscript(text);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          const finalized: TranscriptMessage = { id: itemId, role: 'user', text, isFinal: true };
+          if (last && last.role === 'user' && !last.isFinal) {
+            return [...prev.slice(0, -1), finalized];
+          }
+          return [...prev, finalized];
+        });
+      });
+      agent.on('agentTranscript', ({ text, replyId }) => {
+        setAgentTranscript(text);
+        setMessages((prev) => {
+          // One reply can arrive in pieces; upsert by replyId rather than duplicate.
+          const idx = prev.findIndex((m) => m.role === 'agent' && m.id === replyId);
+          const msg: TranscriptMessage = { id: replyId, role: 'agent', text, isFinal: true };
+          if (idx === -1) return [...prev, msg];
+          const next = [...prev];
+          next[idx] = msg;
+          return next;
+        });
+      });
       agent.on('speechStarted', () => {
         if (!options.disableBargeIn) session.clearPlayback();
       });
@@ -152,6 +204,7 @@ export function useVoiceAgent(
 
   return {
     status,
+    messages,
     userTranscript,
     agentTranscript,
     isAgentSpeaking,
