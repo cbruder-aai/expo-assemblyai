@@ -16,7 +16,7 @@ export function PillButton({ label, onPress, variant = 'primary', loading, disab
       ? theme.colors.danger
       : variant === 'ghost'
         ? 'transparent'
-        : theme.colors.pink;
+        : theme.colors.accent;
   return (
     <Pressable
       onPress={onPress}
@@ -27,7 +27,7 @@ export function PillButton({ label, onPress, variant = 'primary', loading, disab
         variant === 'ghost' && styles.ghost,
       ]}>
       {loading ? (
-        <ActivityIndicator color={theme.colors.text} />
+        <ActivityIndicator color={theme.colors.ink} />
       ) : (
         <Text style={[styles.label, variant === 'ghost' && { color: theme.colors.textMuted }]}>
           {label}
@@ -47,5 +47,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ghost: { borderWidth: 1, borderColor: theme.colors.border, minWidth: 0 },
-  label: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.3 },
+  label: { color: theme.colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
 });

@@ -1,5 +1,9 @@
+import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+// RN's own SafeAreaView is iOS-only; Expo is edge-to-edge on Android, so use
+// safe-area-context to keep the header/tabs out from under the status bar.
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { DreamsProvider } from './src/context/DreamsContext';
 import { DreamEditorModal } from './src/components/DreamEditorModal';
@@ -13,9 +17,11 @@ type Tab = 'list' | 'calendar';
 
 export default function App() {
   return (
-    <DreamsProvider>
-      <Root />
-    </DreamsProvider>
+    <SafeAreaProvider>
+      <DreamsProvider>
+        <Root />
+      </DreamsProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -26,13 +32,14 @@ function Root() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={theme.colors.background} />
+      <StatusBar style="light" />
 
       <View style={styles.header}>
-        <Text style={styles.brand}>
-          Assembly<Text style={{ color: theme.colors.pink }}>AI</Text>
-        </Text>
-        <Text style={styles.tagline}>Dream Journal</Text>
+        <CrescentMoon />
+        <View>
+          <Text style={styles.brand}>Nocturne</Text>
+          <Text style={styles.tagline}>Dream journal</Text>
+        </View>
       </View>
 
       <View style={styles.tabs}>
@@ -56,6 +63,15 @@ function Root() {
   );
 }
 
+/** A drawn crescent: an accent disc with an offset background disc cut over it. */
+function CrescentMoon() {
+  return (
+    <View style={styles.moon}>
+      <View style={styles.moonCut} />
+    </View>
+  );
+}
+
 function TabButton({
   label,
   active,
@@ -74,22 +90,47 @@ function TabButton({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.background },
-  header: { alignItems: 'center', paddingTop: 16, paddingBottom: 8 },
-  brand: { color: theme.colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
-  tagline: { color: theme.colors.textMuted, fontSize: 13, marginTop: 2, letterSpacing: 0.5 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 4,
+  },
+  brand: { color: theme.colors.text, fontSize: 24, fontWeight: '700', letterSpacing: 0.2 },
+  tagline: { color: theme.colors.textMuted, fontSize: 12, marginTop: 1, letterSpacing: 0.4 },
+  moon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: theme.colors.gold,
+    overflow: 'hidden',
+  },
+  moonCut: {
+    position: 'absolute',
+    top: -4,
+    left: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: theme.colors.background,
+  },
   tabs: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 4,
     marginHorizontal: 20,
-    marginTop: 12,
+    marginTop: 14,
     marginBottom: 8,
-    padding: 4,
+    padding: 3,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
   },
-  tab: { flex: 1, paddingVertical: 10, borderRadius: theme.radius.pill, alignItems: 'center' },
+  tab: { flex: 1, paddingVertical: 9, borderRadius: theme.radius.pill, alignItems: 'center' },
   tabActive: { backgroundColor: theme.colors.surfaceRaised },
   tabLabel: { color: theme.colors.textMuted, fontWeight: '600', fontSize: 14 },
-  tabLabelActive: { color: theme.colors.cyan },
+  tabLabelActive: { color: theme.colors.text },
   body: { flex: 1, paddingTop: 8 },
 });

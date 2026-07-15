@@ -6,7 +6,7 @@ import { theme } from '../theme';
 type Props = {
   /** 0…1 audio level driving the pulse. */
   level: number;
-  /** Orb accent — cyan while listening, pink while the agent speaks. */
+  /** Orb accent — periwinkle while listening, moon gold while the agent speaks. */
   mode: 'listening' | 'speaking' | 'idle';
 };
 
@@ -24,7 +24,11 @@ export function VoiceOrb({ level, mode }: Props) {
   }, [level, scale]);
 
   const color =
-    mode === 'speaking' ? theme.colors.pink : mode === 'listening' ? theme.colors.cyan : theme.colors.border;
+    mode === 'speaking'
+      ? theme.colors.gold
+      : mode === 'listening'
+        ? theme.colors.accent
+        : theme.colors.border;
 
   return (
     <View style={styles.wrap}>

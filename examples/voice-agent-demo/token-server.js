@@ -29,8 +29,13 @@ const PORT = Number(process.env.PORT) || 8787;
 
 // Optional: comma-separated list of allowed origins for CORS. Defaults to `*`
 // so the local web demo (http://localhost:8081) works out of the box. In
-// production, set ALLOWED_ORIGIN to your app's origin.
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+// production, set ALLOWED_ORIGIN to your app's origin(s). Only the requesting
+// origin is echoed back — a comma-separated Access-Control-Allow-Origin value
+// is invalid CORS and browsers reject it.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || '*')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 if (!API_KEY) {
   console.error(
@@ -78,7 +83,12 @@ function json(res, status, body) {
 
 const server = http.createServer(async (req, res) => {
   // CORS so the web demo can call this dev server from another origin.
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Vary', 'Origin');
   if (req.method === 'OPTIONS') {
@@ -107,5 +117,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`\n✓ Token server listening on http://localhost:${PORT}`);
   console.log('  Routes: GET /health · GET /streaming-token · GET /voice-agent-token');
-  console.log(`  API key loaded (…${API_KEY.slice(-4)}). CORS origin: ${ALLOWED_ORIGIN}\n`);
+  console.log(`  API key loaded (…${API_KEY.slice(-4)}). CORS origins: ${ALLOWED_ORIGINS.join(', ')}\n`);
 });
