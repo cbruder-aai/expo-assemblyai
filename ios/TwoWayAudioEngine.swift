@@ -47,6 +47,10 @@ final class TwoWayAudioEngine {
   private var config = Config()
   private var isRunning = false
   private var isMuted = false
+  /// Whether the current graph has a live capture path. False when no audio
+  /// input exists (e.g. a Simulator with I/O → Audio Input set to None); the
+  /// engine then runs playback-only and retries capture in the background.
+  private var captureAvailable = false
 
   /// Format the player node runs at (engine main-mixer format); playback buffers
   /// are converted into this before scheduling.
@@ -81,6 +85,10 @@ final class TwoWayAudioEngine {
       try engine.start()
       player.play()
       isRunning = true
+      if !captureAvailable {
+        NSLog("[expo-assemblyai] no audio input available; running playback-only and polling for a mic")
+        scheduleCaptureRecovery()
+      }
     }
   }
 
@@ -94,6 +102,7 @@ final class TwoWayAudioEngine {
       scheduledPlaybackBuffers = 0
       playbackConverter = nil
       playbackSourceFormat = nil
+      captureAvailable = false
       isRunning = false
       try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -164,13 +173,22 @@ final class TwoWayAudioEngine {
     }
     #endif
 
-    let hardwareFormat = input.outputFormat(forBus: 0)
-    guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
-      // The input node has no live format: no audio input is mapped (Simulator
-      // with I/O → Audio Input set to None, or the host mic blocked). Tapping or
-      // connecting through a 0 Hz node makes AVFAudio throw an NSException that
-      // Swift cannot catch, so fail with a catchable error instead of aborting.
-      throw AudioError.noAudioInput
+    // A 0 Hz input format means no audio input is mapped (Simulator with
+    // I/O → Audio Input set to None, or the host mic blocked). Tapping or
+    // connecting through a 0 Hz node makes AVFAudio throw an NSException that
+    // Swift cannot catch — so in that case run playback-only (the agent's
+    // voice still plays) and let the background retry attach the mic when an
+    // input appears, instead of failing the whole session.
+    let inputFormat = input.outputFormat(forBus: 0)
+    captureAvailable = inputFormat.sampleRate > 0 && inputFormat.channelCount > 0
+
+    let hardwareFormat: AVAudioFormat
+    if captureAvailable {
+      hardwareFormat = inputFormat
+    } else if let fallback = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) {
+      hardwareFormat = fallback
+    } else {
+      throw AudioError.formatUnavailable
     }
     playbackFormat = hardwareFormat
 
@@ -189,22 +207,54 @@ final class TwoWayAudioEngine {
       playbackConverter = AVAudioConverter(from: source, to: hardwareFormat)
     }
 
-    guard
-      let capture = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: config.inputSampleRate,
-        channels: 1,
-        interleaved: true)
-    else { throw AudioError.formatUnavailable }
-    captureFormat = capture
-    captureConverter = AVAudioConverter(from: hardwareFormat, to: capture)
+    if captureAvailable {
+      guard
+        let capture = AVAudioFormat(
+          commonFormat: .pcmFormatInt16,
+          sampleRate: config.inputSampleRate,
+          channels: 1,
+          interleaved: true)
+      else { throw AudioError.formatUnavailable }
+      captureFormat = capture
+      captureConverter = AVAudioConverter(from: hardwareFormat, to: capture)
 
-    let framesPerBuffer = AVAudioFrameCount(hardwareFormat.sampleRate * 0.02)  // ~20ms taps
-    input.installTap(onBus: 0, bufferSize: framesPerBuffer, format: hardwareFormat) {
-      [weak self] buffer, _ in
-      self?.queue.async { self?.handleCapture(buffer) }
+      let framesPerBuffer = AVAudioFrameCount(hardwareFormat.sampleRate * 0.02)  // ~20ms taps
+      input.installTap(onBus: 0, bufferSize: framesPerBuffer, format: hardwareFormat) {
+        [weak self] buffer, _ in
+        self?.queue.async { self?.handleCapture(buffer) }
+      }
     }
     engine.prepare()
+  }
+
+  /// Playback-only recovery loop: while running without a capture path, poll
+  /// for an input device (the Simulator's I/O → Audio Input can be attached
+  /// mid-session) and rebuild the graph with the mic once one appears.
+  private func scheduleCaptureRecovery() {
+    queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+      guard let self, self.isRunning, !self.captureAvailable else { return }
+      // Re-activate the session so a newly attached input is picked up, then
+      // check whether the input node now has real geometry.
+      try? self.configureSession()
+      let format = self.engine.inputNode.outputFormat(forBus: 0)
+      guard format.sampleRate > 0, format.channelCount > 0 else {
+        self.scheduleCaptureRecovery()
+        return
+      }
+      // Input appeared — rebuild the whole graph with the capture path.
+      self.engine.inputNode.removeTap(onBus: 0)
+      self.player.stop()
+      self.engine.stop()
+      do {
+        try self.installGraph()
+        try self.engine.start()
+        self.player.play()
+        NSLog("[expo-assemblyai] audio input attached; capture recovered")
+      } catch {
+        self.delegate?.audioEngine(self, didFail: "audio capture recovery failed: \(error.localizedDescription)")
+      }
+      if !self.captureAvailable { self.scheduleCaptureRecovery() }
+    }
   }
 
   // MARK: - Capture path
@@ -316,14 +366,11 @@ final class TwoWayAudioEngine {
 
   enum AudioError: LocalizedError {
     case formatUnavailable
-    case noAudioInput
 
     var errorDescription: String? {
       switch self {
       case .formatUnavailable:
         return "Requested audio format is unavailable"
-      case .noAudioInput:
-        return "No audio input available. In the Simulator, set I/O → Audio Input to Internal Microphone and allow the Simulator mic access in System Settings → Privacy & Security → Microphone."
       }
     }
   }
