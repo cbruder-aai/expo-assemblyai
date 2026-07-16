@@ -152,12 +152,26 @@ final class TwoWayAudioEngine {
 
   private func installGraph() throws {
     let input = engine.inputNode
+    #if targetEnvironment(simulator)
+    // Voice-processing IO is broken on the simulator: enabling it leaves the
+    // input node reporting a 0 Hz format, and connecting a node with that
+    // format makes AVAudioEngine throw an NSException (uncatchable from Swift).
+    // The simulator has no acoustic echo path anyway — verify AEC on a device.
+    #else
     if config.enableEchoCancellation {
       // Voice-processing IO: hardware/OS AEC referencing the speaker output.
       try input.setVoiceProcessingEnabled(true)
     }
+    #endif
 
     let hardwareFormat = input.outputFormat(forBus: 0)
+    guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+      // The input node has no live format: no audio input is mapped (Simulator
+      // with I/O → Audio Input set to None, or the host mic blocked). Tapping or
+      // connecting through a 0 Hz node makes AVFAudio throw an NSException that
+      // Swift cannot catch, so fail with a catchable error instead of aborting.
+      throw AudioError.noAudioInput
+    }
     playbackFormat = hardwareFormat
 
     engine.attach(player)
@@ -300,5 +314,17 @@ final class TwoWayAudioEngine {
     return 0
   }
 
-  enum AudioError: Error { case formatUnavailable }
+  enum AudioError: LocalizedError {
+    case formatUnavailable
+    case noAudioInput
+
+    var errorDescription: String? {
+      switch self {
+      case .formatUnavailable:
+        return "Requested audio format is unavailable"
+      case .noAudioInput:
+        return "No audio input available. In the Simulator, set I/O → Audio Input to Internal Microphone and allow the Simulator mic access in System Settings → Privacy & Security → Microphone."
+      }
+    }
+  }
 }
