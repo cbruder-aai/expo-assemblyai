@@ -40,8 +40,12 @@ final class TwoWayAudioEngine {
 
   weak var delegate: TwoWayAudioEngineDelegate?
 
-  private let engine = AVAudioEngine()
-  private let player = AVAudioPlayerNode()
+  // Recreated on every (re)build: once an AVAudioEngine has instantiated its
+  // input node, it always wants an input unit — which fails to start with
+  // kAudioUnitErr_InvalidPropertyValue (-10851) when no input device exists.
+  // A fresh engine per attempt keeps playback-only starts clean.
+  private var engine = AVAudioEngine()
+  private var player = AVAudioPlayerNode()
   private let queue = DispatchQueue(label: "com.assemblyai.expo.audio")
 
   private var config = Config()
@@ -80,6 +84,7 @@ final class TwoWayAudioEngine {
   func start() throws {
     try queue.sync {
       guard !isRunning else { return }
+      rebuildEngine()
       try configureSession()
       try installGraph()
       try engine.start()
@@ -95,7 +100,7 @@ final class TwoWayAudioEngine {
   func stop() {
     queue.sync {
       guard isRunning else { return }
-      engine.inputNode.removeTap(onBus: 0)
+      if captureAvailable { engine.inputNode.removeTap(onBus: 0) }
       player.stop()
       engine.stop()
       pendingCapture.removeAll(keepingCapacity: true)
@@ -149,41 +154,51 @@ final class TwoWayAudioEngine {
 
   private func configureSession() throws {
     let session = AVAudioSession.sharedInstance()
-    // `.voiceChat` mode turns on the same signal processing as a phone call
-    // (AEC/AGC); `.playAndRecord` is required for simultaneous mic + speaker.
-    try session.setCategory(
-      .playAndRecord,
-      mode: config.enableEchoCancellation ? .voiceChat : .default,
-      options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+    if session.isInputAvailable {
+      // `.voiceChat` mode turns on the same signal processing as a phone call
+      // (AEC/AGC); `.playAndRecord` is required for simultaneous mic + speaker.
+      try session.setCategory(
+        .playAndRecord,
+        mode: config.enableEchoCancellation ? .voiceChat : .default,
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+    } else {
+      // No input device at all (Simulator with I/O → Audio Input set to None):
+      // a .playAndRecord IO unit cannot even be created there — CoreAudio fails
+      // with kAudioUnitErr_InvalidPropertyValue (-10851) — so run the session
+      // playback-only until an input appears.
+      try session.setCategory(.playback, mode: .default, options: [])
+    }
     try session.setPreferredSampleRate(config.outputSampleRate)
     try session.setActive(true, options: .notifyOthersOnDeactivation)
   }
 
   private func installGraph() throws {
-    let input = engine.inputNode
-    #if targetEnvironment(simulator)
-    // Voice-processing IO is broken on the simulator: enabling it leaves the
-    // input node reporting a 0 Hz format, and connecting a node with that
-    // format makes AVAudioEngine throw an NSException (uncatchable from Swift).
-    // The simulator has no acoustic echo path anyway — verify AEC on a device.
-    #else
-    if config.enableEchoCancellation {
-      // Voice-processing IO: hardware/OS AEC referencing the speaker output.
-      try input.setVoiceProcessingEnabled(true)
+    // Decide capture from the *session*, not the engine: merely accessing
+    // `engine.inputNode` wires an input unit into the engine, which then fails
+    // to start when no input device exists. Only touch the input side when the
+    // session says a mic is actually there.
+    var inputFormat: AVAudioFormat?
+    if AVAudioSession.sharedInstance().isInputAvailable {
+      let input = engine.inputNode
+      #if targetEnvironment(simulator)
+      // Voice-processing IO is broken on the simulator: enabling it leaves the
+      // input node reporting a 0 Hz format, and connecting a node with that
+      // format makes AVAudioEngine throw an NSException (uncatchable from
+      // Swift). The simulator has no acoustic echo path anyway — verify AEC on
+      // a real device.
+      #else
+      if config.enableEchoCancellation {
+        // Voice-processing IO: hardware/OS AEC referencing the speaker output.
+        try input.setVoiceProcessingEnabled(true)
+      }
+      #endif
+      let format = input.outputFormat(forBus: 0)
+      if format.sampleRate > 0, format.channelCount > 0 { inputFormat = format }
     }
-    #endif
-
-    // A 0 Hz input format means no audio input is mapped (Simulator with
-    // I/O → Audio Input set to None, or the host mic blocked). Tapping or
-    // connecting through a 0 Hz node makes AVFAudio throw an NSException that
-    // Swift cannot catch — so in that case run playback-only (the agent's
-    // voice still plays) and let the background retry attach the mic when an
-    // input appears, instead of failing the whole session.
-    let inputFormat = input.outputFormat(forBus: 0)
-    captureAvailable = inputFormat.sampleRate > 0 && inputFormat.channelCount > 0
+    captureAvailable = inputFormat != nil
 
     let hardwareFormat: AVAudioFormat
-    if captureAvailable {
+    if let inputFormat {
       hardwareFormat = inputFormat
     } else if let fallback = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) {
       hardwareFormat = fallback
@@ -219,7 +234,7 @@ final class TwoWayAudioEngine {
       captureConverter = AVAudioConverter(from: hardwareFormat, to: capture)
 
       let framesPerBuffer = AVAudioFrameCount(hardwareFormat.sampleRate * 0.02)  // ~20ms taps
-      input.installTap(onBus: 0, bufferSize: framesPerBuffer, format: hardwareFormat) {
+      engine.inputNode.installTap(onBus: 0, bufferSize: framesPerBuffer, format: hardwareFormat) {
         [weak self] buffer, _ in
         self?.queue.async { self?.handleCapture(buffer) }
       }
@@ -233,19 +248,19 @@ final class TwoWayAudioEngine {
   private func scheduleCaptureRecovery() {
     queue.asyncAfter(deadline: .now() + 2) { [weak self] in
       guard let self, self.isRunning, !self.captureAvailable else { return }
-      // Re-activate the session so a newly attached input is picked up, then
-      // check whether the input node now has real geometry.
-      try? self.configureSession()
-      let format = self.engine.inputNode.outputFormat(forBus: 0)
-      guard format.sampleRate > 0, format.channelCount > 0 else {
+      // Ask the *session* whether an input appeared — never poke the engine's
+      // input node speculatively (see installGraph).
+      guard AVAudioSession.sharedInstance().isInputAvailable else {
         self.scheduleCaptureRecovery()
         return
       }
-      // Input appeared — rebuild the whole graph with the capture path.
-      self.engine.inputNode.removeTap(onBus: 0)
+      // Input appeared — tear down the playback-only engine and rebuild the
+      // whole graph (fresh engine, .playAndRecord session) with the mic.
       self.player.stop()
       self.engine.stop()
+      self.rebuildEngine()
       do {
+        try self.configureSession()
         try self.installGraph()
         try self.engine.start()
         self.player.play()
@@ -255,6 +270,19 @@ final class TwoWayAudioEngine {
       }
       if !self.captureAvailable { self.scheduleCaptureRecovery() }
     }
+  }
+
+  /// Discard the engine and player and start from scratch. See the property
+  /// comment on `engine` for why reuse across attempts is unsafe.
+  private func rebuildEngine() {
+    engine = AVAudioEngine()
+    player = AVAudioPlayerNode()
+    scheduledPlaybackBuffers = 0
+    playbackConverter = nil
+    playbackSourceFormat = nil
+    captureConverter = nil
+    captureFormat = nil
+    pendingCapture.removeAll(keepingCapacity: true)
   }
 
   // MARK: - Capture path
